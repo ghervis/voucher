@@ -715,7 +715,7 @@
       <div class="flex flex-row items-start justify-between gap-4">
         <div class="flex-1">
           {#if validCustomVouchers > 0 || validGrabFoodVouchers > 0 || validFoodPandaVouchers > 0 || hiddenVouchers.length > 0}
-            <div class="text-sm sm:text-base font-medium mt-2 space-y-1">
+            <div class="text-sm sm:text-base font-medium space-y-1">
               {#if validCustomVouchers > 0}
                 <div class="text-gray-700">{validCustomVouchers} Custom</div>
               {/if}
