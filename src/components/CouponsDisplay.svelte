@@ -58,6 +58,7 @@
   let newVoucherCode = "";
   let newVoucherDescription = "";
   let newVoucherCta = "";
+  let newVoucherMerchant = "GrabFood";
   let dialog: HTMLDialogElement;
   let confirmDialog: HTMLDialogElement;
   let voucherToDelete: CustomVoucher | null = null;
@@ -117,10 +118,21 @@
     (article) =>
       article.couponCode &&
       article.couponCode.trim() !== "" &&
-      article.couponCode !== "No code found"
+      article.couponCode !== "No code found" &&
+      (article.merchantName?.toLowerCase().includes("grabfood") ||
+        article.merchantName?.toLowerCase().includes("grab"))
   ).length;
 
-  $: totalValidVouchers = validCustomVouchers + validGrabFoodVouchers;
+  $: validFoodPandaVouchers = filteredDiscountArticles.filter(
+    (article) =>
+      article.couponCode &&
+      article.couponCode.trim() !== "" &&
+      article.couponCode !== "No code found" &&
+      article.merchantName?.toLowerCase().includes("foodpanda")
+  ).length;
+
+  $: totalValidVouchers =
+    validCustomVouchers + validGrabFoodVouchers + validFoodPandaVouchers;
 
   // Custom vouchers management functions
   function loadCustomVouchers() {
@@ -220,6 +232,7 @@
       code: newVoucherCode.trim(),
       description: newVoucherDescription.trim() || "Custom voucher",
       cta: newVoucherCta.trim() || "Use this code",
+      merchantName: newVoucherMerchant,
     };
 
     customVouchers = [newVoucher, ...customVouchers];
@@ -238,6 +251,7 @@
             code: newVoucherCode.trim(),
             description: newVoucherDescription.trim() || "Custom voucher",
             cta: newVoucherCta.trim() || "Use this code",
+            merchantName: newVoucherMerchant,
           }
         : voucher
     );
@@ -306,6 +320,7 @@
     newVoucherCode = voucher.code;
     newVoucherDescription = voucher.description;
     newVoucherCta = voucher.cta;
+    newVoucherMerchant = voucher.merchantName || "GrabFood";
     dialog.showModal();
   }
 
@@ -314,6 +329,7 @@
     newVoucherCode = "";
     newVoucherDescription = "";
     newVoucherCta = "";
+    newVoucherMerchant = "GrabFood";
   }
 
   // Cache management functions
@@ -556,8 +572,6 @@
         // Check if we have cached data first
         const cachedData = getCachedVoucherData(article.id);
 
-        console.log("cachedDATa", cachedData);
-
         if (cachedData) {
           console.log(
             `Using cached data for article ${i + 1}/${extractedArticles.length}: ${article.id}`
@@ -649,7 +663,10 @@
   }
 </script>
 
-<div class="h-screen flex flex-col">
+<div
+  class="h-screen flex flex-col bg-cover bg-center bg-no-repeat"
+  style="background-image: url('/background.png');"
+>
   <!-- Fixed Header -->
   <div class="sticky top-0 z-10 bg-white border-b border-gray-200 shadow-sm">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -658,10 +675,17 @@
           <h1 class="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900">
             {totalValidVouchers} Codes
           </h1>
-          {#if validCustomVouchers > 0 || validGrabFoodVouchers > 0}
+          {#if validCustomVouchers > 0 || validGrabFoodVouchers > 0 || validFoodPandaVouchers > 0 || hiddenVouchers.length > 0}
             <div class="text-xs text-gray-600 mt-1 space-y-0.5">
-              <div>{validCustomVouchers} Custom</div>
-              <div>{validGrabFoodVouchers} GrabFood</div>
+              {#if validCustomVouchers > 0}
+                <div>{validCustomVouchers} Custom</div>
+              {/if}
+              {#if validGrabFoodVouchers > 0}
+                <div>{validGrabFoodVouchers} GrabFood</div>
+              {/if}
+              {#if validFoodPandaVouchers > 0}
+                <div>{validFoodPandaVouchers} FoodPanda</div>
+              {/if}
               {#if hiddenVouchers.length > 0}
                 <div>{hiddenVouchers.length} Hidden</div>
               {/if}
@@ -776,55 +800,43 @@
             {#each combinedVouchers as voucher}
               {#if voucher.voucherCode}
                 <div
-                  class="p-3 sm:p-4 rounded-lg border {voucher.merchantName} {voucher.isCustom
-                    ? 'bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200'
-                    : ('merchantName' in voucher &&
-                          voucher.merchantName
-                            ?.toLowerCase()
-                            .includes('grabfood')) ||
-                        ('merchantName' in voucher &&
-                          voucher.merchantName?.toLowerCase().includes('grab'))
-                      ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200'
-                      : 'merchantName' in voucher &&
-                          voucher.merchantName
-                            ?.toLowerCase()
-                            .includes('foodpanda')
-                        ? 'bg-gradient-to-r from-pink-50 to-red-50 border-pink-200'
-                        : 'bg-gradient-to-r from-gray-50 to-slate-50 border-gray-200'}"
+                  class="p-3 sm:p-4 rounded-lg border backdrop-blur-sm shadow-lg {('merchantName' in
+                    voucher &&
+                    voucher.merchantName?.toLowerCase().includes('grabfood')) ||
+                  ('merchantName' in voucher &&
+                    voucher.merchantName?.toLowerCase().includes('grab'))
+                    ? 'bg-green-200/60 border-green-400/70'
+                    : 'merchantName' in voucher &&
+                        voucher.merchantName
+                          ?.toLowerCase()
+                          .includes('foodpanda')
+                      ? 'bg-pink-200/60 border-pink-400/70'
+                      : 'bg-gray-200/60 border-gray-400/70'}"
                 >
                   <div class="mb-3">
                     <button
                       on:click={() =>
                         copyToClipboard(voucher.voucherCode || "")}
-                      class="w-full text-base sm:text-lg font-bold font-mono bg-white px-3 py-2 rounded border break-all flex items-center justify-between hover:bg-gray-50 transition-colors cursor-pointer {voucher.isCustom
-                        ? 'text-purple-700'
-                        : ('merchantName' in voucher &&
-                              voucher.merchantName
-                                ?.toLowerCase()
-                                .includes('grabfood')) ||
-                            ('merchantName' in voucher &&
-                              voucher.merchantName
-                                ?.toLowerCase()
-                                .includes('grab'))
-                          ? 'text-green-700'
-                          : 'merchantName' in voucher &&
-                              voucher.merchantName
-                                ?.toLowerCase()
-                                .includes('foodpanda')
-                            ? 'text-pink-700'
-                            : 'text-gray-700'}"
+                      class="w-full text-base sm:text-lg font-bold font-mono backdrop-blur-sm bg-white/90 px-3 py-2 rounded border border-white/40 break-all flex items-center justify-between hover:bg-white/95 transition-all cursor-pointer shadow-sm {('merchantName' in
+                        voucher &&
+                        voucher.merchantName
+                          ?.toLowerCase()
+                          .includes('grabfood')) ||
+                      ('merchantName' in voucher &&
+                        voucher.merchantName?.toLowerCase().includes('grab'))
+                        ? 'text-green-700'
+                        : 'merchantName' in voucher &&
+                            voucher.merchantName
+                              ?.toLowerCase()
+                              .includes('foodpanda')
+                          ? 'text-pink-700'
+                          : 'text-gray-700'}"
                       title="Click to copy voucher code"
                       aria-label="Copy voucher code"
                     >
                       <span class="flex-1 text-left">{voucher.voucherCode}</span
                       >
                       <div class="flex items-center gap-2 ml-2 flex-shrink-0">
-                        {#if voucher.isCustom}
-                          <span
-                            class="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded-full font-medium"
-                            >Custom</span
-                          >
-                        {/if}
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
                           class="h-5 w-5"
@@ -852,7 +864,7 @@
                           {voucher.cta || "View Details"}
                         </summary>
                         <div
-                          class="mt-3 p-3 bg-white rounded border text-sm space-y-2"
+                          class="mt-3 p-3 backdrop-blur-sm bg-white/85 rounded border border-white/40 text-sm space-y-2 shadow-sm"
                         >
                           <div>
                             <p class="text-gray-600 mt-1 leading-relaxed">
@@ -1016,6 +1028,23 @@
       </div>
       <div>
         <label
+          for="modal-voucher-merchant"
+          class="block text-sm font-medium text-gray-700 mb-1"
+        >
+          Merchant *
+        </label>
+        <select
+          id="modal-voucher-merchant"
+          bind:value={newVoucherMerchant}
+          required
+          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+        >
+          <option value="GrabFood">GrabFood</option>
+          <option value="Foodpanda">Foodpanda</option>
+        </select>
+      </div>
+      <div>
+        <label
           for="modal-voucher-cta"
           class="block text-sm font-medium text-gray-700 mb-1"
         >
@@ -1027,7 +1056,7 @@
           bind:value={newVoucherCta}
           placeholder="e.g., 'Save 20% on your order'"
           required
-          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         />
       </div>
       <div>
@@ -1042,7 +1071,7 @@
           bind:value={newVoucherDescription}
           placeholder="Enter description (optional)"
           rows="3"
-          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         ></textarea>
       </div>
       <div class="flex gap-2 pt-4">
