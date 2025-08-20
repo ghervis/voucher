@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { base } from "$app/paths";
 
   interface DiscountArticle {
     id: string;
@@ -665,7 +666,7 @@
 
 <div
   class="h-screen flex flex-col bg-cover bg-center bg-no-repeat"
-  style="background-image: url('/background.png');"
+  style="background-image: url('{base}/background.png');"
 >
   <!-- Fixed Header -->
   <div class="sticky top-0 z-10 bg-white border-b border-gray-200 shadow-sm">
@@ -800,24 +801,24 @@
             {#each combinedVouchers as voucher}
               {#if voucher.voucherCode}
                 <div
-                  class="p-3 sm:p-4 rounded-lg border backdrop-blur-sm shadow-lg {('merchantName' in
+                  class="p-3 sm:p-4 rounded-lg border shadow-lg {('merchantName' in
                     voucher &&
                     voucher.merchantName?.toLowerCase().includes('grabfood')) ||
                   ('merchantName' in voucher &&
                     voucher.merchantName?.toLowerCase().includes('grab'))
-                    ? 'bg-green-200/60 border-green-400/70'
+                    ? 'bg-green-100/95 border-green-300/100'
                     : 'merchantName' in voucher &&
                         voucher.merchantName
                           ?.toLowerCase()
                           .includes('foodpanda')
-                      ? 'bg-pink-200/60 border-pink-400/70'
-                      : 'bg-gray-200/60 border-gray-400/70'}"
+                      ? 'bg-pink-100/95 border-pink-300/100'
+                      : 'bg-gray-200/95 border-gray-400/100'}"
                 >
                   <div class="mb-3">
                     <button
                       on:click={() =>
                         copyToClipboard(voucher.voucherCode || "")}
-                      class="w-full text-base sm:text-lg font-bold font-mono backdrop-blur-sm bg-white/90 px-3 py-2 rounded border border-white/40 break-all flex items-center justify-between hover:bg-white/95 transition-all cursor-pointer shadow-sm {('merchantName' in
+                      class="w-full text-base sm:text-lg font-bold font-mono bg-white/95 px-3 py-2 rounded border border-white/60 break-all flex items-center justify-between hover:bg-white transition-all cursor-pointer shadow-sm {('merchantName' in
                         voucher &&
                         voucher.merchantName
                           ?.toLowerCase()
@@ -864,7 +865,7 @@
                           {voucher.cta || "View Details"}
                         </summary>
                         <div
-                          class="mt-3 p-3 backdrop-blur-sm bg-white/85 rounded border border-white/40 text-sm space-y-2 shadow-sm"
+                          class="mt-3 p-3 bg-white/95 rounded border border-white/60 text-sm space-y-2 shadow-sm"
                         >
                           <div>
                             <p class="text-gray-600 mt-1 leading-relaxed">
