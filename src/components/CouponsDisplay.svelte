@@ -54,7 +54,6 @@
 
   // Custom vouchers management
   let customVouchers: CustomVoucher[] = [];
-  let showAddForm = false;
   let editingVoucher: CustomVoucher | null = null;
   let newVoucherCode = "";
   let newVoucherDescription = "";
@@ -68,21 +67,13 @@
   let forceRefreshConfirmDialog: HTMLDialogElement;
   let hiddenVouchers: string[] = [];
 
+  let hiddenCategories: { [key: string]: boolean } = {};
+  const CATEGORY_VISIBILITY_KEY = "voucher-category-visibility";
+
   const CUSTOM_VOUCHERS_KEY = "grabfood-custom-vouchers";
 
   // Excluded voucher codes that should not be displayed
   const excludedCodes = ["NoCodeRequired", "NoCouponRequired"];
-
-  // Filtered arrays for display (excluding unwanted codes)
-  $: filteredVoucherCodes = discountArticles
-    .filter((article) => {
-      return (
-        article.couponCode &&
-        !excludedCodes.includes(article.couponCode) &&
-        !hiddenVouchers.includes(article.id || "")
-      );
-    })
-    .map((article) => article.couponCode);
 
   $: filteredDiscountArticles = discountArticles.filter((article) => {
     return (
@@ -91,20 +82,47 @@
     );
   });
 
-  // Combined list: custom vouchers first, then fetched vouchers
+  // Combined list: custom vouchers first, then fetched vouchers (filtered by category visibility)
   $: combinedVouchers = [
-    ...customVouchers.map((voucher) => ({
-      ...voucher,
-      isCustom: true,
-      voucherCode: voucher.code,
-      cta: voucher.cta,
-      description: voucher.description,
-    })),
-    ...filteredDiscountArticles.map((article) => ({
-      ...article,
-      isCustom: false,
-      voucherCode: article.couponCode,
-    })),
+    ...customVouchers
+      .filter((voucher) => {
+        // Hide custom vouchers if their merchant matches hidden categories
+        if (
+          voucher.merchantName?.toLowerCase().includes("grabfood") ||
+          voucher.merchantName?.toLowerCase().includes("grab")
+        ) {
+          return !hiddenCategories["grabfood"];
+        }
+        if (voucher.merchantName?.toLowerCase().includes("foodpanda")) {
+          return !hiddenCategories["foodpanda"];
+        }
+        return true; // Show custom vouchers without specific merchant matches
+      })
+      .map((voucher) => ({
+        ...voucher,
+        isCustom: true,
+        voucherCode: voucher.code,
+        cta: voucher.cta,
+        description: voucher.description,
+      })),
+    ...filteredDiscountArticles
+      .filter((article) => {
+        if (
+          article.merchantName?.toLowerCase().includes("grabfood") ||
+          article.merchantName?.toLowerCase().includes("grab")
+        ) {
+          return !hiddenCategories["grabfood"];
+        }
+        if (article.merchantName?.toLowerCase().includes("foodpanda")) {
+          return !hiddenCategories["foodpanda"];
+        }
+        return true; // Show other merchants if not specifically hidden
+      })
+      .map((article) => ({
+        ...article,
+        isCustom: false,
+        voucherCode: article.couponCode,
+      })),
   ];
 
   // Count only vouchers with valid codes (not null, empty, or "No code found")
@@ -131,9 +149,6 @@
       article.couponCode !== "No code found" &&
       article.merchantName?.toLowerCase().includes("foodpanda")
   ).length;
-
-  $: totalValidVouchers =
-    validCustomVouchers + validGrabFoodVouchers + validFoodPandaVouchers;
 
   // Custom vouchers management functions
   function loadCustomVouchers() {
@@ -205,24 +220,6 @@
       );
       hiddenVouchers = [...hiddenVouchers, voucherId];
     }
-  }
-
-  function unhideVoucher(voucherId: string) {
-    // Get existing cache data
-    const cachedData = getCachedVoucherDataFull(voucherId);
-    if (cachedData) {
-      // Update cache to remove hidden flag
-      const updatedCache: CachedVoucherData = {
-        ...cachedData,
-        expire: Date.now() + CACHE_DURATION,
-        hidden: false,
-      };
-      localStorage.setItem(
-        `${CACHE_KEY}-${voucherId}`,
-        JSON.stringify(updatedCache)
-      );
-    }
-    hiddenVouchers = hiddenVouchers.filter((id) => id !== voucherId);
   }
 
   function addCustomVoucher() {
@@ -331,6 +328,55 @@
     newVoucherDescription = "";
     newVoucherCta = "";
     newVoucherMerchant = "GrabFood";
+  }
+
+  // Category visibility functions
+  function loadCategoryVisibility() {
+    try {
+      const saved = localStorage.getItem(CATEGORY_VISIBILITY_KEY);
+      if (saved) {
+        hiddenCategories = JSON.parse(saved);
+      }
+    } catch (error) {
+      console.error("Error loading category visibility:", error);
+      hiddenCategories = {};
+    }
+  }
+
+  function saveCategoryVisibility() {
+    try {
+      localStorage.setItem(
+        CATEGORY_VISIBILITY_KEY,
+        JSON.stringify(hiddenCategories)
+      );
+    } catch (error) {
+      console.error("Error saving category visibility:", error);
+    }
+  }
+
+  function toggleCategoryVisibility(category: string) {
+    if (category === "grabfood" || category === "foodpanda") {
+      // For grabfood and foodpanda, only one can be hidden at a time
+      if (hiddenCategories[category]) {
+        // If currently hidden, show it
+        hiddenCategories[category] = false;
+      } else {
+        // If currently shown, hide it and ensure the other is shown
+        hiddenCategories[category] = true;
+        const otherCategory =
+          category === "grabfood" ? "foodpanda" : "grabfood";
+        hiddenCategories[otherCategory] = false;
+      }
+    } else {
+      // For other categories, use normal toggle behavior
+      hiddenCategories[category] = !hiddenCategories[category];
+    }
+    saveCategoryVisibility();
+  }
+
+  function resetCategoryVisibility() {
+    hiddenCategories = {};
+    localStorage.removeItem(CATEGORY_VISIBILITY_KEY);
   }
 
   // Cache management functions
@@ -631,6 +677,7 @@
     fetchGrabFoodVouchers();
     loadCustomVouchers();
     loadHiddenVouchers();
+    loadCategoryVisibility();
   });
 
   function copyToClipboard(text: string) {
@@ -651,15 +698,9 @@
     });
   }
 
-  function copyAllIds() {
-    const allIds = articleIds.join(", ");
-    navigator.clipboard.writeText(allIds).then(() => {
-      alert(`Copied all ${articleIds.length} article IDs to clipboard!`);
-    });
-  }
-
   async function forceRefresh() {
     clearVoucherCache();
+    resetCategoryVisibility();
     await fetchGrabFoodVouchers();
   }
 </script>
@@ -673,22 +714,117 @@
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
       <div class="flex flex-row items-start justify-between gap-4">
         <div class="flex-1">
-          <h1 class="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900">
-            {totalValidVouchers} Codes
-          </h1>
           {#if validCustomVouchers > 0 || validGrabFoodVouchers > 0 || validFoodPandaVouchers > 0 || hiddenVouchers.length > 0}
-            <div class="text-xs text-gray-600 mt-1 space-y-0.5">
+            <div class="text-sm sm:text-base font-medium mt-2 space-y-1">
               {#if validCustomVouchers > 0}
-                <div>{validCustomVouchers} Custom</div>
+                <div class="text-gray-700">{validCustomVouchers} Custom</div>
               {/if}
               {#if validGrabFoodVouchers > 0}
-                <div>{validGrabFoodVouchers} GrabFood</div>
+                <div class="text-green-700 font-semibold flex items-center">
+                  <span>{validGrabFoodVouchers} GrabFood</span>
+                  <button
+                    on:click={() => toggleCategoryVisibility("grabfood")}
+                    class="p-1 hover:bg-gray-100 rounded transition-colors"
+                    title={hiddenCategories["grabfood"]
+                      ? "Show GrabFood vouchers"
+                      : "Hide GrabFood vouchers"}
+                  >
+                    {#if hiddenCategories["grabfood"]}
+                      <!-- Eye slashed icon -->
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        class="h-4 w-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21"
+                        />
+                      </svg>
+                    {:else}
+                      <!-- Eye icon -->
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        class="h-4 w-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                        />
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                        />
+                      </svg>
+                    {/if}
+                  </button>
+                </div>
               {/if}
               {#if validFoodPandaVouchers > 0}
-                <div>{validFoodPandaVouchers} FoodPanda</div>
+                <div class="text-pink-700 font-semibold flex items-center">
+                  <span>{validFoodPandaVouchers} FoodPanda</span>
+                  <button
+                    on:click={() => toggleCategoryVisibility("foodpanda")}
+                    class="p-1 hover:bg-gray-100 rounded transition-colors"
+                    title={hiddenCategories["foodpanda"]
+                      ? "Show FoodPanda vouchers"
+                      : "Hide FoodPanda vouchers"}
+                  >
+                    {#if hiddenCategories["foodpanda"]}
+                      <!-- Eye slashed icon -->
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        class="h-4 w-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21"
+                        />
+                      </svg>
+                    {:else}
+                      <!-- Eye icon -->
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        class="h-4 w-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                        />
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                        />
+                      </svg>
+                    {/if}
+                  </button>
+                </div>
               {/if}
               {#if hiddenVouchers.length > 0}
-                <div>{hiddenVouchers.length} Hidden</div>
+                <div class="text-gray-500">{hiddenVouchers.length} Hidden</div>
               {/if}
             </div>
           {/if}
