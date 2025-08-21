@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { base } from "$app/paths";
   import CouponsDisplay from "../components/CouponsDisplay.svelte";
 </script>
 

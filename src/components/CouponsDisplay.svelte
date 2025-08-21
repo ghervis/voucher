@@ -504,18 +504,18 @@
           {#if validCustomVouchers > 0 || validGrabFoodVouchers > 0 || validFoodPandaVouchers > 0 || hiddenVouchers.length > 0}
             <div class="text-sm sm:text-base font-medium space-y-1">
               {#if validCustomVouchers > 0}
-                <div class="text-gray-700">{validCustomVouchers} Custom</div>
+                <div class="text-purple-600">{validCustomVouchers} Custom</div>
               {/if}
               {#if validGrabFoodVouchers > 0}
-                <div class="text-green-700 font-semibold flex items-center">
+                <button
+                  on:click={() => toggleCategoryVisibility("grabfood")}
+                  class="text-green-700 font-semibold flex items-center hover:bg-gray-100 rounded transition-colors py-1 pr-1"
+                  title={hiddenCategories["grabfood"]
+                    ? "Show GrabFood vouchers"
+                    : "Hide GrabFood vouchers"}
+                >
                   <span>{validGrabFoodVouchers} GrabFood</span>
-                  <button
-                    on:click={() => toggleCategoryVisibility("grabfood")}
-                    class="p-1 hover:bg-gray-100 rounded transition-colors"
-                    title={hiddenCategories["grabfood"]
-                      ? "Show GrabFood vouchers"
-                      : "Hide GrabFood vouchers"}
-                  >
+                  <div class="ml-1">
                     {#if hiddenCategories["grabfood"]}
                       <!-- Eye slashed icon -->
                       <svg
@@ -555,19 +555,19 @@
                         />
                       </svg>
                     {/if}
-                  </button>
-                </div>
+                  </div>
+                </button>
               {/if}
               {#if validFoodPandaVouchers > 0}
-                <div class="text-pink-700 font-semibold flex items-center">
+                <button
+                  on:click={() => toggleCategoryVisibility("foodpanda")}
+                  class="text-pink-700 font-semibold flex items-center hover:bg-gray-100 rounded transition-colors py-1 pr-1"
+                  title={hiddenCategories["foodpanda"]
+                    ? "Show FoodPanda vouchers"
+                    : "Hide FoodPanda vouchers"}
+                >
                   <span>{validFoodPandaVouchers} FoodPanda</span>
-                  <button
-                    on:click={() => toggleCategoryVisibility("foodpanda")}
-                    class="p-1 hover:bg-gray-100 rounded transition-colors"
-                    title={hiddenCategories["foodpanda"]
-                      ? "Show FoodPanda vouchers"
-                      : "Hide FoodPanda vouchers"}
-                  >
+                  <div class="ml-1">
                     {#if hiddenCategories["foodpanda"]}
                       <!-- Eye slashed icon -->
                       <svg
@@ -607,8 +607,8 @@
                         />
                       </svg>
                     {/if}
-                  </button>
-                </div>
+                  </div>
+                </button>
               {/if}
               {#if hiddenVouchers.length > 0}
                 <div class="text-gray-500">{hiddenVouchers.length} Hidden</div>
