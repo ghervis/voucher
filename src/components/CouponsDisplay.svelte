@@ -70,6 +70,16 @@
   let hiddenCategories: { [key: string]: boolean } = {};
   const CATEGORY_VISIBILITY_KEY = "voucher-category-visibility";
 
+  // Hold-to-force-refresh variables
+  let isHolding = false;
+  let showForceAnimation = false;
+  let holdProgress = 0;
+  let holdTimer: ReturnType<typeof setTimeout> | null = null;
+  let progressTimer: ReturnType<typeof setInterval> | null = null;
+  let animationTimer: ReturnType<typeof setTimeout> | null = null;
+  const HOLD_DURATION = 3000; // 3 seconds
+  const ANIMATION_DELAY = 800; // 0.8 seconds before showing animation
+
   const CUSTOM_VOUCHERS_KEY = "grabfood-custom-vouchers";
 
   // Excluded voucher codes that should not be displayed
@@ -300,8 +310,59 @@
     hideConfirmDialog.close();
   }
 
-  function confirmForceRefresh() {
-    forceRefreshConfirmDialog.showModal();
+  // Hold-to-force-refresh functions
+  function startHold() {
+    if (isLoading) return;
+
+    isHolding = true;
+    showForceAnimation = false;
+    holdProgress = 0;
+
+    // Start animation after 0.8 seconds
+    animationTimer = setTimeout(() => {
+      if (isHolding) {
+        showForceAnimation = true;
+
+        // Start progress animation
+        progressTimer = setInterval(() => {
+          holdProgress += 100 / ((HOLD_DURATION - ANIMATION_DELAY) / 50); // Update every 50ms
+          if (holdProgress >= 100) {
+            holdProgress = 100;
+            if (progressTimer) {
+              clearInterval(progressTimer);
+              progressTimer = null;
+            }
+          }
+        }, 50);
+      }
+    }, ANIMATION_DELAY);
+
+    // Set timer for force refresh
+    holdTimer = setTimeout(() => {
+      forceRefreshConfirmDialog.showModal();
+      stopHold();
+    }, HOLD_DURATION);
+  }
+
+  function stopHold() {
+    isHolding = false;
+    showForceAnimation = false;
+    holdProgress = 0;
+
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+    }
+
+    if (progressTimer) {
+      clearInterval(progressTimer);
+      progressTimer = null;
+    }
+
+    if (animationTimer) {
+      clearTimeout(animationTimer);
+      animationTimer = null;
+    }
   }
 
   function handleForceRefreshConfirm() {
@@ -840,45 +901,66 @@
           >
             Add Custom Voucher
           </button>
-          <div class="flex gap-2">
+          <div class="flex flex-col items-end">
             <button
               on:click={fetchGrabFoodVouchers}
-              class="px-4 sm:px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-xs sm:text-sm whitespace-nowrap"
+              on:mousedown={startHold}
+              on:mouseup={stopHold}
+              on:mouseleave={stopHold}
+              on:touchstart={startHold}
+              on:touchend={stopHold}
+              on:touchcancel={stopHold}
+              class="relative overflow-hidden px-4 sm:px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-xs sm:text-sm whitespace-nowrap"
               disabled={isLoading}
+              title={isHolding
+                ? "Hold for 3 seconds to force refresh"
+                : "Click to refresh or hold for 3 seconds to force refresh"}
             >
-              {#if isLoading}
-                <svg
-                  class="animate-spin h-4 w-4 text-white"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    class="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    stroke-width="4"
-                  ></circle>
-                  <path
-                    class="opacity-75"
-                    fill="currentColor"
-                    d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  ></path>
-                </svg>
-              {:else}
-                Refresh
+              <!-- Progress indicator background -->
+              {#if showForceAnimation}
+                <div
+                  class="absolute inset-0 bg-gradient-to-r from-orange-600 to-red-600 transition-all duration-75 ease-linear"
+                  style="width: {holdProgress}%"
+                ></div>
               {/if}
+
+              <!-- Button content -->
+              <div class="relative z-10 flex items-center justify-center">
+                {#if isLoading}
+                  <svg
+                    class="animate-spin h-4 w-4 text-white"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      class="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      stroke-width="4"
+                    ></circle>
+                    <path
+                      class="opacity-75"
+                      fill="currentColor"
+                      d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                {:else}
+                  {showForceAnimation
+                    ? `Hard Refresh (${Math.ceil((HOLD_DURATION - ANIMATION_DELAY - (holdProgress * (HOLD_DURATION - ANIMATION_DELAY)) / 100) / 1000)})`
+                    : "Refresh"}
+                {/if}
+              </div>
             </button>
-            <button
-              on:click={confirmForceRefresh}
-              class="px-4 sm:px-6 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium text-xs sm:text-sm whitespace-nowrap"
-              disabled={isLoading}
-              title="Clear cache and fetch fresh data"
-            >
-              Force
-            </button>
+
+            <!-- Mini text below button - only show when holding -->
+            {#if isHolding}
+              <div class="text-xs text-gray-500 mt-1 text-center">
+                Hold to Hard Refresh
+              </div>
+            {/if}
           </div>
         </div>
       </div>
