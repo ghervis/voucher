@@ -8,47 +8,21 @@
     title?: string;
     content?: string;
     couponCode?: string;
-    cta?: string;
     headline?: string;
     description?: string;
     merchantName?: string;
-  }
-
-  interface VoucherData {
-    code: string | null;
-    cta?: string;
-    headline?: string;
-    description?: string;
-    merchantName?: string;
-  }
-
-  interface CachedVoucherData extends VoucherData {
-    expire: number;
-    hidden?: boolean;
   }
 
   interface CustomVoucher {
     id: string;
     code: string;
     description: string;
-    cta: string;
     merchantName?: string;
-  }
-
-  const CACHE_KEY = "grabfood-voucher-cache";
-  const CACHE_DURATION = 2 * 30 * 24 * 60 * 60 * 1000; // 2 months in milliseconds
-  const EXCLUDED_CODES = ["NoCodeRequired", "NoCouponRequired"];
-
-  // Helper function to check if a code should be excluded
-  function shouldExcludeCode(code: string): boolean {
-    return EXCLUDED_CODES.includes(code);
   }
 
   let isLoading = true;
   let error: string | null = null;
   let discountArticles: DiscountArticle[] = [];
-  let articleIds: string[] = [];
-  let voucherCodes: string[] = [];
   let copiedCode: string | null = null;
   let copyTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -57,39 +31,30 @@
   let editingVoucher: CustomVoucher | null = null;
   let newVoucherCode = "";
   let newVoucherDescription = "";
-  let newVoucherCta = "";
   let newVoucherMerchant = "GrabFood";
   let dialog: HTMLDialogElement;
   let confirmDialog: HTMLDialogElement;
   let voucherToDelete: CustomVoucher | null = null;
   let hideConfirmDialog: HTMLDialogElement;
   let voucherToHide: { id: string; voucherCode: string } | null = null;
-  let forceRefreshConfirmDialog: HTMLDialogElement;
   let hiddenVouchers: string[] = [];
+  let expandedDescriptions: Set<string> = new Set();
+
+  // Long-press hard refresh functionality
+  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let isLongPressing = false;
+  let longPressProgress = 0;
+  let longPressInterval: ReturnType<typeof setInterval> | null = null;
+  let showHardRefreshInstruction = false;
+  let showHardRefreshButtonText = false;
 
   let hiddenCategories: { [key: string]: boolean } = {};
   const CATEGORY_VISIBILITY_KEY = "voucher-category-visibility";
 
-  // Hold-to-force-refresh variables
-  let isHolding = false;
-  let showForceAnimation = false;
-  let holdProgress = 0;
-  let holdTimer: ReturnType<typeof setTimeout> | null = null;
-  let progressTimer: ReturnType<typeof setInterval> | null = null;
-  let animationTimer: ReturnType<typeof setTimeout> | null = null;
-  const HOLD_DURATION = 3000; // 3 seconds
-  const ANIMATION_DELAY = 800; // 0.8 seconds before showing animation
-
   const CUSTOM_VOUCHERS_KEY = "grabfood-custom-vouchers";
 
-  // Excluded voucher codes that should not be displayed
-  const excludedCodes = ["NoCodeRequired", "NoCouponRequired"];
-
   $: filteredDiscountArticles = discountArticles.filter((article) => {
-    return (
-      !excludedCodes.includes(article.couponCode || "") &&
-      !hiddenVouchers.includes(article.id || "")
-    );
+    return !hiddenVouchers.includes(article.couponCode || "");
   });
 
   // Combined list: custom vouchers first, then fetched vouchers (filtered by category visibility)
@@ -97,10 +62,7 @@
     ...customVouchers
       .filter((voucher) => {
         // Hide custom vouchers if their merchant matches hidden categories
-        if (
-          voucher.merchantName?.toLowerCase().includes("grabfood") ||
-          voucher.merchantName?.toLowerCase().includes("grab")
-        ) {
+        if (voucher.merchantName?.toLowerCase().includes("grabfood")) {
           return !hiddenCategories["grabfood"];
         }
         if (voucher.merchantName?.toLowerCase().includes("foodpanda")) {
@@ -112,15 +74,11 @@
         ...voucher,
         isCustom: true,
         voucherCode: voucher.code,
-        cta: voucher.cta,
         description: voucher.description,
       })),
     ...filteredDiscountArticles
       .filter((article) => {
-        if (
-          article.merchantName?.toLowerCase().includes("grabfood") ||
-          article.merchantName?.toLowerCase().includes("grab")
-        ) {
+        if (article.merchantName?.toLowerCase().includes("grabfood")) {
           return !hiddenCategories["grabfood"];
         }
         if (article.merchantName?.toLowerCase().includes("foodpanda")) {
@@ -132,31 +90,26 @@
         ...article,
         isCustom: false,
         voucherCode: article.couponCode,
+        description: article.content, // Map content to description for display
       })),
   ];
 
-  // Count only vouchers with valid codes (not null, empty, or "No code found")
+  // Count only vouchers with valid codes (not null or empty)
   $: validCustomVouchers = customVouchers.filter(
-    (voucher) =>
-      voucher.code &&
-      voucher.code.trim() !== "" &&
-      voucher.code !== "No code found"
+    (voucher) => voucher.code && voucher.code.trim() !== ""
   ).length;
 
   $: validGrabFoodVouchers = filteredDiscountArticles.filter(
     (article) =>
       article.couponCode &&
       article.couponCode.trim() !== "" &&
-      article.couponCode !== "No code found" &&
-      (article.merchantName?.toLowerCase().includes("grabfood") ||
-        article.merchantName?.toLowerCase().includes("grab"))
+      article.merchantName?.toLowerCase().includes("grabfood")
   ).length;
 
   $: validFoodPandaVouchers = filteredDiscountArticles.filter(
     (article) =>
       article.couponCode &&
       article.couponCode.trim() !== "" &&
-      article.couponCode !== "No code found" &&
       article.merchantName?.toLowerCase().includes("foodpanda")
   ).length;
 
@@ -183,52 +136,18 @@
   // Hidden vouchers management functions
   function loadHiddenVouchers() {
     try {
-      hiddenVouchers = [];
-      // Load hidden status from each voucher's cache
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith(CACHE_KEY)) {
-          const cached = localStorage.getItem(key);
-          if (cached) {
-            const parsedCache: CachedVoucherData = JSON.parse(cached);
-            if (parsedCache.hidden) {
-              const articleId = key.replace(`${CACHE_KEY}-`, "");
-              hiddenVouchers.push(articleId);
-            }
-          }
-        }
-      }
-      hiddenVouchers = [...hiddenVouchers]; // Trigger reactivity
+      const stored = localStorage.getItem("hidden-vouchers");
+      hiddenVouchers = stored ? JSON.parse(stored) : [];
     } catch (error) {
       console.error("Error loading hidden vouchers:", error);
+      hiddenVouchers = [];
     }
   }
 
-  function hideVoucher(voucherId: string) {
-    if (!hiddenVouchers.includes(voucherId)) {
-      // Get existing cache data or create minimal cache entry
-      let cachedData = getCachedVoucherDataFull(voucherId);
-      if (!cachedData) {
-        // Create minimal cache entry if none exists
-        cachedData = {
-          code: null,
-          expire: Date.now() + CACHE_DURATION,
-          hidden: false,
-        };
-      }
-
-      // Update cache with hidden flag
-      const updatedCache: CachedVoucherData = {
-        ...cachedData,
-        expire: Date.now() + CACHE_DURATION,
-        hidden: true,
-      };
-
-      localStorage.setItem(
-        `${CACHE_KEY}-${voucherId}`,
-        JSON.stringify(updatedCache)
-      );
-      hiddenVouchers = [...hiddenVouchers, voucherId];
+  function hideVoucher(voucherCode: string) {
+    if (!hiddenVouchers.includes(voucherCode)) {
+      hiddenVouchers = [...hiddenVouchers, voucherCode];
+      localStorage.setItem("hidden-vouchers", JSON.stringify(hiddenVouchers));
     }
   }
 
@@ -239,7 +158,6 @@
       id: Date.now().toString(),
       code: newVoucherCode.trim(),
       description: newVoucherDescription.trim() || "Custom voucher",
-      cta: newVoucherCta.trim() || "Use this code",
       merchantName: newVoucherMerchant,
     };
 
@@ -258,7 +176,6 @@
             ...voucher,
             code: newVoucherCode.trim(),
             description: newVoucherDescription.trim() || "Custom voucher",
-            cta: newVoucherCta.trim() || "Use this code",
             merchantName: newVoucherMerchant,
           }
         : voucher
@@ -299,7 +216,7 @@
 
   function handleHideConfirm() {
     if (voucherToHide) {
-      hideVoucher(voucherToHide.id);
+      hideVoucher(voucherToHide.voucherCode);
       voucherToHide = null;
     }
     hideConfirmDialog.close();
@@ -310,75 +227,10 @@
     hideConfirmDialog.close();
   }
 
-  // Hold-to-force-refresh functions
-  function startHold() {
-    if (isLoading) return;
-
-    isHolding = true;
-    showForceAnimation = false;
-    holdProgress = 0;
-
-    // Start animation after 0.8 seconds
-    animationTimer = setTimeout(() => {
-      if (isHolding) {
-        showForceAnimation = true;
-
-        // Start progress animation
-        progressTimer = setInterval(() => {
-          holdProgress += 100 / ((HOLD_DURATION - ANIMATION_DELAY) / 50); // Update every 50ms
-          if (holdProgress >= 100) {
-            holdProgress = 100;
-            if (progressTimer) {
-              clearInterval(progressTimer);
-              progressTimer = null;
-            }
-          }
-        }, 50);
-      }
-    }, ANIMATION_DELAY);
-
-    // Set timer for force refresh
-    holdTimer = setTimeout(() => {
-      forceRefreshConfirmDialog.showModal();
-      stopHold();
-    }, HOLD_DURATION);
-  }
-
-  function stopHold() {
-    isHolding = false;
-    showForceAnimation = false;
-    holdProgress = 0;
-
-    if (holdTimer) {
-      clearTimeout(holdTimer);
-      holdTimer = null;
-    }
-
-    if (progressTimer) {
-      clearInterval(progressTimer);
-      progressTimer = null;
-    }
-
-    if (animationTimer) {
-      clearTimeout(animationTimer);
-      animationTimer = null;
-    }
-  }
-
-  function handleForceRefreshConfirm() {
-    forceRefreshConfirmDialog.close();
-    forceRefresh();
-  }
-
-  function handleForceRefreshCancel() {
-    forceRefreshConfirmDialog.close();
-  }
-
   function editCustomVoucher(voucher: CustomVoucher) {
     editingVoucher = voucher;
     newVoucherCode = voucher.code;
     newVoucherDescription = voucher.description;
-    newVoucherCta = voucher.cta;
     newVoucherMerchant = voucher.merchantName || "GrabFood";
     dialog.showModal();
   }
@@ -387,7 +239,6 @@
     editingVoucher = null;
     newVoucherCode = "";
     newVoucherDescription = "";
-    newVoucherCta = "";
     newVoucherMerchant = "GrabFood";
   }
 
@@ -440,167 +291,102 @@
     localStorage.removeItem(CATEGORY_VISIBILITY_KEY);
   }
 
-  // Cache management functions
-  function getCachedVoucherDataFull(
-    articleId: string
-  ): CachedVoucherData | null {
-    try {
-      const cached = localStorage.getItem(`${CACHE_KEY}-${articleId}`);
-      if (!cached) return null;
+  // Long press functionality
+  function startLongPress() {
+    if (isLoading) return;
 
-      const parsedCache: CachedVoucherData = JSON.parse(cached);
-      const now = Date.now();
+    isLongPressing = true;
+    longPressProgress = 0;
+    showHardRefreshInstruction = true; // Show immediately
+    showHardRefreshButtonText = false;
 
-      // Check if cache has expired
-      if (now > parsedCache.expire) {
-        localStorage.removeItem(`${CACHE_KEY}-${articleId}`);
-        return null;
+    // Show button text after 1 second
+    setTimeout(() => {
+      if (isLongPressing) {
+        showHardRefreshButtonText = true;
       }
+    }, 1000);
 
-      return parsedCache;
-    } catch (error) {
-      console.error("Error reading cache for", articleId, error);
-      return null;
-    }
-  }
-
-  function getCachedVoucherData(articleId: string): VoucherData | null {
-    try {
-      const cached = localStorage.getItem(`${CACHE_KEY}-${articleId}`);
-      if (!cached) return null;
-
-      const parsedCache: CachedVoucherData = JSON.parse(cached);
-      const now = Date.now();
-
-      // Check if cache has expired
-      if (now > parsedCache.expire) {
-        localStorage.removeItem(`${CACHE_KEY}-${articleId}`);
-        return null;
+    // Update progress every 20ms for smooth animation
+    longPressInterval = setInterval(() => {
+      longPressProgress += (20 / 4000) * 100; // 4 seconds = 100%
+      if (longPressProgress >= 100) {
+        longPressProgress = 100;
+        clearInterval(longPressInterval!);
+        longPressInterval = null;
       }
+    }, 20);
 
-      return {
-        code: parsedCache.code,
-        cta: parsedCache.cta,
-        headline: parsedCache.headline,
-        description: parsedCache.description,
-        merchantName: parsedCache.merchantName,
-      };
-    } catch (error) {
-      console.error("Error reading cache for", articleId, error);
-      return null;
+    // Trigger hard refresh after 4 seconds
+    longPressTimer = setTimeout(() => {
+      endLongPress();
+      fetchGrabFoodVouchers(true); // Hard refresh
+    }, 4000);
+  }
+
+  function endLongPress() {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+    if (longPressInterval) {
+      clearInterval(longPressInterval);
+      longPressInterval = null;
+    }
+    isLongPressing = false;
+    longPressProgress = 0;
+    showHardRefreshInstruction = false;
+    showHardRefreshButtonText = false;
+  }
+
+  function handleRefreshClick() {
+    if (!isLongPressing) {
+      fetchGrabFoodVouchers(false); // Regular refresh
     }
   }
 
-  function setCachedVoucherData(articleId: string, data: VoucherData): void {
-    try {
-      // Get existing cache to preserve hidden flag
-      const existingCache = getCachedVoucherDataFull(articleId);
-      const cacheData: CachedVoucherData = {
-        ...data,
-        expire: Date.now() + CACHE_DURATION,
-        hidden: existingCache?.hidden || false,
-      };
-      localStorage.setItem(
-        `${CACHE_KEY}-${articleId}`,
-        JSON.stringify(cacheData)
-      );
-    } catch (error) {
-      console.error("Error caching data for", articleId, error);
-    }
-  }
-
-  function clearVoucherCache(): void {
-    try {
-      const keys = Object.keys(localStorage);
-      keys.forEach((key) => {
-        if (key.startsWith(CACHE_KEY)) {
-          localStorage.removeItem(key);
-        }
-      });
-      console.log("Voucher cache cleared");
-    } catch (error) {
-      console.error("Error clearing cache:", error);
-    }
-  }
-
-  async function fetchVoucherCode(
-    articleId: string
-  ): Promise<VoucherData | null> {
-    // Check cache first
-    const cachedData = getCachedVoucherData(articleId);
-    if (cachedData) {
-      console.log(`Using cached data for article ${articleId}`);
-      return cachedData;
-    }
-
-    try {
-      const apiUrl = `https://www.philstar.com/coupons/api/offers/16/en/${articleId}`;
-      const proxyUrl = "https://corsproxy.io/?";
-      const response = await fetch(proxyUrl + encodeURIComponent(apiUrl));
-
-      if (!response.ok) {
-        console.error(
-          `API request failed for ${articleId}: ${response.status}`
-        );
-        return null;
-      }
-
-      const data = await response.json();
-
-      console.log("data", data);
-
-      const combinedCta = `${data.cta.heading} ${data.cta.value}`.trim();
-
-      // Extract all fields from the API response
-      const result: VoucherData = {
-        code: null,
-        cta: combinedCta,
-        headline: data.headline || data.title || "No headline available",
-        description:
-          data.description || data.content || "No description available",
-        merchantName: data.merchant?.name || "Unknown merchant",
-      };
-
-      if (data && data.code) {
-        // Remove any non-alphanumeric characters and return clean code
-        const cleanCode = data.code.replace(/[^A-Za-z0-9]/g, "");
-
-        // Exclude specific unwanted codes
-        if (!shouldExcludeCode(cleanCode)) {
-          result.code = cleanCode;
-        }
-      }
-
-      // Cache the result
-      setCachedVoucherData(articleId, result);
-      console.log(`Cached data for article ${articleId}`);
-
-      return result;
-    } catch (error) {
-      console.error(`Error fetching voucher code for ${articleId}:`, error);
-      return null;
-    }
-  }
-
-  async function fetchGrabFoodVouchers() {
+  async function fetchGrabFoodVouchers(hardRefresh = false) {
     try {
       isLoading = true;
       error = null;
 
+      // Hard refresh clears hidden vouchers
+      if (hardRefresh) {
+        hiddenVouchers = [];
+        localStorage.removeItem("hidden-vouchers");
+      }
+
       // Multiple target URLs to fetch vouchers from
       const targetUrls = [
-        "https://www.philstar.com/coupons/grabfood",
-        "https://www.philstar.com/coupons/foodpanda",
+        "https://iprice.ph/?s=grabfood",
+        "https://iprice.ph/?s=foodpanda",
       ];
       const proxyUrl = "https://corsproxy.io/?";
 
       const extractedArticles: DiscountArticle[] = [];
-      const extractedIds: string[] = [];
 
       // Fetch from each target URL
       for (const targetUrl of targetUrls) {
-        console.log(`Fetching from: ${targetUrl}`);
-        const response = await fetch(proxyUrl + encodeURIComponent(targetUrl));
+        console.log(
+          `Fetching from: ${targetUrl}${hardRefresh ? " (hard refresh)" : ""}`
+        );
+        const fetchUrl = proxyUrl + encodeURIComponent(targetUrl);
+        const fetchOptions: RequestInit = {};
+
+        // Add cache-busting for hard refresh
+        if (hardRefresh) {
+          fetchOptions.cache = "no-cache";
+          fetchOptions.headers = {
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            Pragma: "no-cache",
+            Expires: "0",
+          };
+        }
+
+        const response = await fetch(
+          fetchUrl + (hardRefresh ? `&_t=${Date.now()}` : ""),
+          fetchOptions
+        );
 
         if (!response.ok) {
           console.error(
@@ -611,123 +397,69 @@
 
         const htmlContent = await response.text();
 
-        // Parse HTML content to extract articles with data-type="code"
+        // Parse HTML content to extract elements with data-clipboard-text
         const parser = new DOMParser();
         const doc = parser.parseFromString(htmlContent, "text/html");
 
-        // Find all article elements with data-type="code"
-        const discountElements = doc.querySelectorAll(
-          'article[data-type="code"]'
-        );
+        // Find all elements with data-clipboard-text attribute (these contain voucher codes)
+        const voucherElements = doc.querySelectorAll("[data-clipboard-text]");
 
-        discountElements.forEach((article) => {
-          const rawId = article.getAttribute("id") || "";
-          // Remove colons and any other non-alphanumeric characters from the ID
-          const id = rawId.replace(/[^A-Za-z0-9]/g, "");
-          const dataType = article.getAttribute("data-type") || "";
+        voucherElements.forEach((element, index) => {
+          const voucherCode = element.getAttribute("data-clipboard-text") || "";
 
-          if (id && dataType === "code") {
-            // Extract title from the article
-            const titleElement = article.querySelector(
-              'h3, .title, [class*="title"]'
-            );
+          if (voucherCode) {
+            // Generate a unique ID for this voucher
+            const id = `voucher-${targetUrl.includes("grabfood") ? "grabfood" : "foodpanda"}-${index}`;
+
+            // Try to find the closest article or container for title and description
+            const container =
+              element.closest("article, .voucher, .coupon, .deal") ||
+              element.parentElement;
+
+            // Extract title
+            const titleElement =
+              container?.querySelector(
+                'h1, h2, h3, h4, .title, [class*="title"], .heading, [class*="heading"]'
+              ) || element;
             const title = titleElement?.textContent?.trim() || "No title found";
 
-            // Extract content preview
-            const contentElement = article.querySelector(
-              'p, .description, [class*="description"]'
+            // Extract content/description - look for h2 > a elements first
+            const contentElement = container?.querySelector(
+              'h2 a, h2 > a, h2.flowhidden.mb10.mt0.fontnormal.position-relative a, h2[class*="flowhidden"] a, h2[class*="mb10"] a, p, .description, [class*="description"], .content, [class*="content"]'
             );
             const content =
               contentElement?.textContent?.trim() || "No description found";
 
-            // Extract CTA text
-            const ctaElement = article.querySelector(
-              '.cta, .call-to-action, [class*="cta"], button, .btn, [class*="button"]'
-            );
-            const cta = ctaElement?.textContent?.trim() || "View Offer";
+            // Determine merchant name based on URL
+            const merchantName = targetUrl.includes("grabfood")
+              ? "GrabFood"
+              : "FoodPanda";
 
             extractedArticles.push({
               id,
-              dataType,
+              dataType: "code",
               title,
               content,
-              cta,
-              // merchantName will be set from API response
+              couponCode: voucherCode,
+              merchantName,
             });
-
-            extractedIds.push(id);
           }
         });
       }
 
       discountArticles = extractedArticles;
-      articleIds = extractedIds;
-
-      console.log('Found article IDs with data-type="code":', extractedIds);
-
-      // Initialize arrays for progressive loading
-      voucherCodes = [];
-      discountArticles = [...extractedArticles]; // Reset with clean articles
-
-      // Fetch coupon codes for each article progressively
-      console.log("Fetching coupon codes...");
-      let cacheHits = 0;
-      let apiFetches = 0;
-
-      for (let i = 0; i < extractedArticles.length; i++) {
-        const article = extractedArticles[i];
-
-        // Check if we have cached data first
-        const cachedData = getCachedVoucherData(article.id);
-
-        if (cachedData) {
-          console.log(
-            `Using cached data for article ${i + 1}/${extractedArticles.length}: ${article.id}`
-          );
-          cacheHits++;
-
-          if (cachedData.code) {
-            // Update the specific article and arrays immediately
-            discountArticles[i].couponCode = cachedData.code;
-            discountArticles[i].cta = cachedData.cta;
-            discountArticles[i].headline = cachedData.headline;
-            discountArticles[i].description = cachedData.description;
-            discountArticles[i].merchantName = cachedData.merchantName;
-
-            // Trigger reactivity by creating new array
-            discountArticles = [...discountArticles];
-          }
-        } else {
-          console.log(
-            `Fetching from API for article ${i + 1}/${extractedArticles.length}: ${article.id}`
-          );
-          apiFetches++;
-
-          const voucherData = await fetchVoucherCode(article.id);
-          if (voucherData && voucherData.code) {
-            // Update the specific article and arrays immediately
-            discountArticles[i].couponCode = voucherData.code;
-            discountArticles[i].cta = voucherData.cta;
-            discountArticles[i].headline = voucherData.headline;
-            discountArticles[i].description = voucherData.description;
-            discountArticles[i].merchantName = voucherData.merchantName;
-
-            // Trigger reactivity by creating new array
-            discountArticles = [...discountArticles];
-          }
-
-          // Add a small delay to avoid overwhelming the server (only for API calls)
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        }
-      }
 
       console.log(
-        `Cache performance - Hits: ${cacheHits}, API calls: ${apiFetches}`
+        "Found vouchers with data-clipboard-text:",
+        extractedArticles.length
       );
-      console.log("Progressive loading completed");
+      console.log("Extracted vouchers:", extractedArticles);
+
+      // Update loading state
+      isLoading = false;
     } catch (err) {
       error = err instanceof Error ? err.message : "An unknown error occurred";
-      console.error("Error fetching GrabFood vouchers:", err);
+      console.error("Error fetching vouchers:", err);
     } finally {
       isLoading = false;
     }
@@ -757,12 +489,6 @@
         copyTimeout = null;
       }, 2000);
     });
-  }
-
-  async function forceRefresh() {
-    clearVoucherCache();
-    resetCategoryVisibility();
-    await fetchGrabFoodVouchers();
   }
 </script>
 
@@ -901,67 +627,86 @@
           >
             Add Custom Voucher
           </button>
-          <div class="flex flex-col items-end">
-            <button
-              on:click={fetchGrabFoodVouchers}
-              on:mousedown={startHold}
-              on:mouseup={stopHold}
-              on:mouseleave={stopHold}
-              on:touchstart={startHold}
-              on:touchend={stopHold}
-              on:touchcancel={stopHold}
-              class="relative overflow-hidden px-4 sm:px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-xs sm:text-sm whitespace-nowrap"
-              disabled={isLoading}
-              title={isHolding
-                ? "Hold for 3 seconds to force refresh"
-                : "Click to refresh or hold for 3 seconds to force refresh"}
-            >
-              <!-- Progress indicator background -->
-              {#if showForceAnimation}
-                <div
-                  class="absolute inset-0 bg-gradient-to-r from-orange-600 to-red-600 transition-all duration-75 ease-linear"
-                  style="width: {holdProgress}%"
-                ></div>
-              {/if}
-
-              <!-- Button content -->
-              <div class="relative z-10 flex items-center justify-center">
-                {#if isLoading}
-                  <svg
-                    class="animate-spin h-4 w-4 text-white"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      class="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      stroke-width="4"
-                    ></circle>
-                    <path
-                      class="opacity-75"
-                      fill="currentColor"
-                      d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
-                {:else}
-                  {showForceAnimation
-                    ? `Hard Refresh (${Math.ceil((HOLD_DURATION - ANIMATION_DELAY - (holdProgress * (HOLD_DURATION - ANIMATION_DELAY)) / 100) / 1000)})`
-                    : "Refresh"}
+          <div class="flex flex-col gap-2 items-end">
+            <div class="relative">
+              <button
+                on:click={handleRefreshClick}
+                on:mousedown={startLongPress}
+                on:mouseup={endLongPress}
+                on:mouseleave={endLongPress}
+                on:touchstart={startLongPress}
+                on:touchend={endLongPress}
+                on:touchcancel={endLongPress}
+                class="px-4 sm:px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-xs sm:text-sm whitespace-nowrap relative overflow-hidden"
+                disabled={isLoading}
+                title="Click to refresh vouchers, hold for 4 seconds for hard refresh"
+              >
+                <!-- Progress bar for long press -->
+                {#if isLongPressing}
+                  <div
+                    class="absolute inset-0 transition-all duration-50"
+                    style="width: {longPressProgress}%; background-color: #ff4500;"
+                  ></div>
                 {/if}
-              </div>
-            </button>
 
-            <!-- Mini text below button - only show when holding -->
-            {#if isHolding}
-              <div class="text-xs text-gray-500 mt-1 text-center">
-                Hold to Hard Refresh
-              </div>
-            {/if}
+                <div class="flex items-center justify-center relative z-10">
+                  {#if isLoading}
+                    <svg
+                      class="animate-spin h-4 w-4 text-white"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        class="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        stroke-width="4"
+                      ></circle>
+                      <path
+                        class="opacity-75"
+                        fill="currentColor"
+                        d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      ></path>
+                    </svg>
+                  {:else}
+                    {showHardRefreshButtonText ? "Hard Refresh" : "Refresh"}
+                  {/if}
+                </div>
+              </button>
+
+              <!-- Long press instruction text -->
+              {#if showHardRefreshInstruction}
+                <div
+                  class="absolute top-full mt-1 right-0 text-xs text-gray-600 whitespace-nowrap"
+                >
+                  Hold to hard refresh
+                </div>
+              {/if}
+            </div>
           </div>
+          <svg
+            class="animate-spin h-4 w-4 text-white"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              class="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+            ></circle>
+            <path
+              class="opacity-75"
+              fill="currentColor"
+              d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+            ></path>
+          </svg>
         </div>
       </div>
     </div>
@@ -1003,7 +748,7 @@
           </h3>
           <p class="text-red-600 mb-4 text-sm">{error}</p>
           <button
-            on:click={fetchGrabFoodVouchers}
+            on:click={() => fetchGrabFoodVouchers(false)}
             class="w-full sm:w-auto px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors text-sm"
           >
             Try Again
@@ -1074,25 +819,39 @@
                     </button>
                   </div>
 
-                  {#if voucher.cta || (!voucher.isCustom && voucher.headline) || voucher.description}
+                  {#if voucher.description}
                     <div class="mt-3 relative">
-                      <details class="w-full">
-                        <summary
-                          class="cursor-pointer text-sm font-semibold text-gray-700 hover:text-gray-900 py-1"
-                        >
-                          {voucher.cta || "View Details"}
-                        </summary>
-                        <div
-                          class="mt-3 p-3 bg-white/95 rounded border border-white/60 text-sm space-y-2 shadow-sm"
-                        >
-                          <div>
-                            <p class="text-gray-600 mt-1 leading-relaxed">
-                              {voucher.description ||
-                                "No description available"}
-                            </p>
-                          </div>
-                        </div>
-                      </details>
+                      <button
+                        class="text-left w-full text-gray-600 text-sm leading-relaxed pr-20 hover:text-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 rounded"
+                        class:line-clamp-1={!expandedDescriptions.has(
+                          voucher.id || voucher.voucherCode
+                        )}
+                        class:sm:line-clamp-2={!expandedDescriptions.has(
+                          voucher.id || voucher.voucherCode
+                        )}
+                        class:overflow-hidden={!expandedDescriptions.has(
+                          voucher.id || voucher.voucherCode
+                        )}
+                        class:text-ellipsis={!expandedDescriptions.has(
+                          voucher.id || voucher.voucherCode
+                        )}
+                        class:break-words={!expandedDescriptions.has(
+                          voucher.id || voucher.voucherCode
+                        )}
+                        on:click={() => {
+                          const voucherId = voucher.id || voucher.voucherCode;
+                          if (voucherId) {
+                            if (expandedDescriptions.has(voucherId)) {
+                              expandedDescriptions.delete(voucherId);
+                            } else {
+                              expandedDescriptions.add(voucherId);
+                            }
+                            expandedDescriptions = expandedDescriptions;
+                          }
+                        }}
+                      >
+                        {voucher.description || "No description available"}
+                      </button>
 
                       {#if voucher.isCustom}
                         <div class="absolute top-0 right-0 flex gap-2">
@@ -1102,7 +861,6 @@
                                 id: voucher.id,
                                 code: voucher.voucherCode || "",
                                 description: voucher.description || "",
-                                cta: voucher.cta || "",
                               })}
                             class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors text-sm shadow-sm"
                             title="Edit voucher"
@@ -1115,7 +873,6 @@
                                 id: voucher.id,
                                 code: voucher.voucherCode || "",
                                 description: voucher.description || "",
-                                cta: voucher.cta || "",
                               })}
                             class="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors text-sm shadow-sm"
                             title="Delete voucher"
@@ -1167,309 +924,249 @@
       {/if}
     </div>
   </div>
-</div>
 
-<!-- Add/Edit Custom Voucher Modal -->
-<dialog
-  bind:this={dialog}
-  class="p-0 rounded-lg shadow-xl max-w-md"
-  style="margin: 1rem auto; width: calc(100% - 2rem);"
->
-  <div class="p-6">
-    <div class="flex justify-between items-center mb-4">
-      <h3 class="text-lg font-semibold text-purple-800">
-        {editingVoucher ? "Edit" : "Add"} Custom Voucher
-      </h3>
-      <button
-        on:click={() => dialog.close()}
-        class="text-gray-400 hover:text-gray-600 transition-colors"
-        aria-label="Close modal"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          class="h-6 w-6"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M6 18L18 6M6 6l12 12"
-          />
-        </svg>
-      </button>
-    </div>
-
-    <!-- Privacy Note -->
-    <div class="mb-4 p-2 bg-blue-50 border border-blue-200 rounded-lg">
-      <div class="flex items-center gap-2">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          class="h-4 w-4 text-blue-600 flex-shrink-0"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
-        </svg>
-        <p class="text-xs text-blue-700">Only you can see this addition.</p>
-      </div>
-    </div>
-
-    <form
-      on:submit|preventDefault={editingVoucher
-        ? updateCustomVoucher
-        : addCustomVoucher}
-      class="space-y-4"
-    >
-      <div>
-        <label
-          for="modal-voucher-code"
-          class="block text-sm font-medium text-gray-700 mb-1"
-        >
-          Voucher Code *
-        </label>
-        <input
-          id="modal-voucher-code"
-          type="text"
-          bind:value={newVoucherCode}
-          placeholder="Enter voucher code"
-          required
-          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-        />
-      </div>
-      <div>
-        <label
-          for="modal-voucher-merchant"
-          class="block text-sm font-medium text-gray-700 mb-1"
-        >
-          Merchant *
-        </label>
-        <select
-          id="modal-voucher-merchant"
-          bind:value={newVoucherMerchant}
-          required
-          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-        >
-          <option value="GrabFood">GrabFood</option>
-          <option value="Foodpanda">Foodpanda</option>
-        </select>
-      </div>
-      <div>
-        <label
-          for="modal-voucher-cta"
-          class="block text-sm font-medium text-gray-700 mb-1"
-        >
-          Title *
-        </label>
-        <input
-          id="modal-voucher-cta"
-          type="text"
-          bind:value={newVoucherCta}
-          placeholder="e.g., 'Save 20% on your order'"
-          required
-          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-        />
-      </div>
-      <div>
-        <label
-          for="modal-voucher-description"
-          class="block text-sm font-medium text-gray-700 mb-1"
-        >
-          Description
-        </label>
-        <textarea
-          id="modal-voucher-description"
-          bind:value={newVoucherDescription}
-          placeholder="Enter description (optional)"
-          rows="3"
-          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-        ></textarea>
-      </div>
-      <div class="flex gap-2 pt-4">
+  <!-- Add/Edit Custom Voucher Modal -->
+  <dialog
+    bind:this={dialog}
+    class="p-0 rounded-lg shadow-xl max-w-md"
+    style="margin: 1rem auto; width: calc(100% - 2rem);"
+  >
+    <div class="p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-purple-800">
+          {editingVoucher ? "Edit" : "Add"} Custom Voucher
+        </h3>
         <button
-          type="submit"
-          class="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium text-sm"
+          on:click={() => dialog.close()}
+          class="text-gray-400 hover:text-gray-600 transition-colors"
+          aria-label="Close modal"
         >
-          {editingVoucher ? "Update" : "Add"} Voucher
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-6 w-6"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M6 18L18 6M6 6l12 12"
+            />
+          </svg>
         </button>
+      </div>
+
+      <!-- Privacy Note -->
+      <div class="mb-4 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+        <div class="flex items-center gap-2">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-4 w-4 text-blue-600 flex-shrink-0"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+          <p class="text-xs text-blue-700">Only you can see this addition.</p>
+        </div>
+      </div>
+
+      <form
+        on:submit|preventDefault={editingVoucher
+          ? updateCustomVoucher
+          : addCustomVoucher}
+        class="space-y-4"
+      >
+        <div>
+          <label
+            for="modal-voucher-code"
+            class="block text-sm font-medium text-gray-700 mb-1"
+          >
+            Voucher Code *
+          </label>
+          <input
+            id="modal-voucher-code"
+            type="text"
+            bind:value={newVoucherCode}
+            placeholder="Enter voucher code"
+            required
+            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+          />
+        </div>
+        <div>
+          <label
+            for="modal-voucher-merchant"
+            class="block text-sm font-medium text-gray-700 mb-1"
+          >
+            Merchant *
+          </label>
+          <select
+            id="modal-voucher-merchant"
+            bind:value={newVoucherMerchant}
+            required
+            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+          >
+            <option value="GrabFood">GrabFood</option>
+            <option value="Foodpanda">Foodpanda</option>
+          </select>
+        </div>
+        <div>
+          <label
+            for="modal-voucher-description"
+            class="block text-sm font-medium text-gray-700 mb-1"
+          >
+            Description
+          </label>
+          <textarea
+            id="modal-voucher-description"
+            bind:value={newVoucherDescription}
+            placeholder="Enter description (optional)"
+            rows="3"
+            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          ></textarea>
+        </div>
+        <div class="flex gap-2 pt-4">
+          <button
+            type="submit"
+            class="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium text-sm"
+          >
+            {editingVoucher ? "Update" : "Add"} Voucher
+          </button>
+          <button
+            type="button"
+            on:click={() => dialog.close()}
+            class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors font-medium text-sm"
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Delete Confirmation Modal -->
+  <dialog
+    bind:this={confirmDialog}
+    class="p-0 rounded-lg shadow-xl max-w-sm"
+    style="margin: 1rem auto; width: calc(100% - 2rem);"
+  >
+    <div class="p-6">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="flex-shrink-0">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-6 w-6 text-red-600"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.502 0L4.312 16.5c-.77.833.192 2.5 1.732 2.5z"
+            />
+          </svg>
+        </div>
+        <div class="flex-1">
+          <h3 class="text-lg font-semibold text-gray-900">Delete Voucher</h3>
+          <p class="text-sm text-gray-600 mt-1">
+            Are you sure you want to delete "{voucherToDelete?.code}"? This
+            action cannot be undone.
+          </p>
+        </div>
+      </div>
+
+      <div class="flex gap-3 justify-end">
         <button
           type="button"
-          on:click={() => dialog.close()}
+          on:click={handleDeleteCancel}
           class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors font-medium text-sm"
         >
           Cancel
         </button>
-      </div>
-    </form>
-  </div>
-</dialog>
-
-<!-- Delete Confirmation Modal -->
-<dialog
-  bind:this={confirmDialog}
-  class="p-0 rounded-lg shadow-xl max-w-sm"
-  style="margin: 1rem auto; width: calc(100% - 2rem);"
->
-  <div class="p-6">
-    <div class="flex items-center gap-3 mb-4">
-      <div class="flex-shrink-0">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          class="h-6 w-6 text-red-600"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
+        <button
+          type="button"
+          on:click={handleDeleteConfirm}
+          class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium text-sm"
         >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.502 0L4.312 16.5c-.77.833.192 2.5 1.732 2.5z"
-          />
-        </svg>
-      </div>
-      <div class="flex-1">
-        <h3 class="text-lg font-semibold text-gray-900">Delete Voucher</h3>
-        <p class="text-sm text-gray-600 mt-1">
-          Are you sure you want to delete "{voucherToDelete?.code}"? This action
-          cannot be undone.
-        </p>
+          Delete
+        </button>
       </div>
     </div>
+  </dialog>
 
-    <div class="flex gap-3 justify-end">
-      <button
-        type="button"
-        on:click={handleDeleteCancel}
-        class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors font-medium text-sm"
-      >
-        Cancel
-      </button>
-      <button
-        type="button"
-        on:click={handleDeleteConfirm}
-        class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium text-sm"
-      >
-        Delete
-      </button>
-    </div>
-  </div>
-</dialog>
+  <!-- Hide Confirmation Modal -->
+  <dialog
+    bind:this={hideConfirmDialog}
+    class="p-0 rounded-lg shadow-xl max-w-sm"
+    style="margin: 1rem auto; width: calc(100% - 2rem);"
+  >
+    <div class="p-6">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="flex-shrink-0">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-6 w-6 text-yellow-600"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L12 12"
+            />
+          </svg>
+        </div>
+        <div class="flex-1">
+          <h3 class="text-lg font-semibold text-gray-900">Hide Voucher</h3>
+          <p class="text-sm text-gray-600 mt-1">
+            Are you sure you want to hide "{voucherToHide?.voucherCode}"? Hidden
+            vouchers will reappear when you refresh the page.
+          </p>
+        </div>
+      </div>
 
-<!-- Hide Confirmation Modal -->
-<dialog
-  bind:this={hideConfirmDialog}
-  class="p-0 rounded-lg shadow-xl max-w-sm"
-  style="margin: 1rem auto; width: calc(100% - 2rem);"
->
-  <div class="p-6">
-    <div class="flex items-center gap-3 mb-4">
-      <div class="flex-shrink-0">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          class="h-6 w-6 text-yellow-600"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
+      <div class="flex gap-3 justify-end">
+        <button
+          type="button"
+          on:click={handleHideCancel}
+          class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors font-medium text-sm"
         >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L12 12"
-          />
-        </svg>
-      </div>
-      <div class="flex-1">
-        <h3 class="text-lg font-semibold text-gray-900">Hide Voucher</h3>
-        <p class="text-sm text-gray-600 mt-1">
-          Are you sure you want to hide "{voucherToHide?.voucherCode}"? Hidden
-          vouchers will reappear when you force refresh the page.
-        </p>
-      </div>
-    </div>
-
-    <div class="flex gap-3 justify-end">
-      <button
-        type="button"
-        on:click={handleHideCancel}
-        class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors font-medium text-sm"
-      >
-        Cancel
-      </button>
-      <button
-        type="button"
-        on:click={handleHideConfirm}
-        class="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors font-medium text-sm"
-      >
-        Hide
-      </button>
-    </div>
-  </div>
-</dialog>
-
-<!-- Force Refresh Confirmation Modal -->
-<dialog
-  bind:this={forceRefreshConfirmDialog}
-  class="p-0 rounded-lg shadow-xl max-w-sm"
-  style="margin: 1rem auto; width: calc(100% - 2rem);"
->
-  <div class="p-6">
-    <div class="flex items-center gap-3 mb-4">
-      <div class="flex-shrink-0">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          class="h-6 w-6 text-orange-600"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
+          Cancel
+        </button>
+        <button
+          type="button"
+          on:click={handleHideConfirm}
+          class="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors font-medium text-sm"
         >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.502 0L4.312 16.5c-.77.833.192 2.5 1.732 2.5z"
-          />
-        </svg>
-      </div>
-      <div class="flex-1">
-        <h3 class="text-lg font-semibold text-gray-900">Force Refresh</h3>
-        <p class="text-sm text-gray-600 mt-1">
-          This will clear all cached data and fetch fresh vouchers. Any hidden
-          vouchers will reappear. Continue?
-        </p>
+          Hide
+        </button>
       </div>
     </div>
+  </dialog>
 
-    <div class="flex gap-3 justify-end">
-      <button
-        type="button"
-        on:click={handleForceRefreshCancel}
-        class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors font-medium text-sm"
-      >
-        Cancel
-      </button>
-      <button
-        type="button"
-        on:click={handleForceRefreshConfirm}
-        class="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium text-sm"
-      >
-        Force Refresh
-      </button>
-    </div>
-  </div>
-</dialog>
+  <style>
+    dialog::backdrop {
+      background-color: rgba(0, 0, 0, 0.3);
+    }
 
-<style>
-  dialog::backdrop {
-    background-color: rgba(0, 0, 0, 0.3);
-  }
-</style>
+    .line-clamp-1 {
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      line-clamp: 1;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+  </style>
+</div>
